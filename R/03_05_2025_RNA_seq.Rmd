@@ -1,0 +1,123 @@
+---
+title: "Gene overlapping analysis for 2025_03_05_RNA_seq dataset"
+output: 
+  html_document:
+    toc: true
+date: "2025-03-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "RNA_seq_2024_12_16/data/2025_03_04")
+```
+
+## README first
++ This gene overlap analysis was conducted by first converting the MGI IDs in files C, D, and E into Ensembl gene IDs, and then comparing these Ensembl gene IDs with those in file A or B. Some MGI IDs (e.g., 2810432L12Rik in column D) do not have corresponding Ensembl gene IDs, although they may overlap with certain genes based on their genomic coordinates. These MGI IDs were excluded from the analysis. 
++ Some rows may contain multiple MGI IDs that map to different Ensembl gene IDs (e.g., "AF357359, ENSMUSG00000091793, Mir370, Rian, lncRNA7665Lodish, lncRNA7690Lodish, lncRNA7692Lodish, lncRNA7693Lodish, lncRNA7694Lodish"). In such cases, all distinct Ensembl gene IDs associated with a given row will be counted in this analysis.
+
+## Preprocessing
+Steps: read Excel files into tibble, and add ensembl_id to C, D, and E, repeat rows where multiple MGI ids exists, etc.
+```{r}
+library(tibble)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(readxl)
+library(biomaRt)
+library(writexl)
+library(rlang)
+
+A <- read_excel("A.xlsx")
+A <- A %>% rename(ensembl_gene_id = Gene)
+B <- read_excel("B.xlsx")
+B <- B %>% rename(ensembl_gene_id = Gene)
+C <- read_excel("C.xlsx")
+C <- C %>% rename(mgi_symbol = Symbol...1)
+C <- C %>% separate_rows(mgi_symbol, sep = ",")
+D <- read_excel("D.xlsx")
+D <- D %>% rename(mgi_symbol = Symbol)
+D <- D %>% separate_rows(mgi_symbol, sep = ",")
+E <- read_excel("E.xlsx")
+E <- E %>% rename(mgi_symbol = Symbol)
+E <- E %>% separate_rows(mgi_symbol, sep = ",")
+
+ensembl <- useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+resC <- getBM(
+  attributes = c("mgi_symbol", "ensembl_gene_id"),
+  filters = "mgi_symbol",
+  values = C$mgi_symbol,
+  mart = ensembl)
+resD <- getBM(
+  attributes = c("mgi_symbol", "ensembl_gene_id"),
+  filters = "mgi_symbol",
+  values = D$mgi_symbol,
+  mart = ensembl)
+resE <- getBM(
+  attributes = c("mgi_symbol", "ensembl_gene_id"),
+  filters = "mgi_symbol",
+  values = E$mgi_symbol,
+  mart = ensembl)
+
+C <- left_join(C, resC, by = "mgi_symbol", relationship = "many-to-many")
+C <- C %>%
+  mutate(ensembl_gene_id = ifelse(substr(mgi_symbol, 1, 7) == "ENSMUSG",
+                                  mgi_symbol, ensembl_gene_id))
+D <- left_join(D, resD, by = "mgi_symbol", relationship = "many-to-many")
+D <- D %>%
+  mutate(ensembl_gene_id = ifelse(substr(mgi_symbol, 1, 7) == "ENSMUSG",
+                                  mgi_symbol, ensembl_gene_id))
+E <- left_join(E, resE, by = "mgi_symbol", relationship = "many-to-many")
+E <- E %>%
+  mutate(ensembl_gene_id = ifelse(substr(mgi_symbol, 1, 7) == "ENSMUSG",
+                                  mgi_symbol, ensembl_gene_id))
+```
+
+## Task1: How many genes in A are also present in C? Can you merge these two files? Generate file of overlapping genes between A and C.
+```{r}
+ol_AC <- sum(A$ensembl_gene_id %in% C$ensembl_gene_id)
+inform(paste0(ol_AC, " genes in A are also present in C.\n"))
+
+tb_A_C <- full_join(A, C, by = "ensembl_gene_id")
+write_xlsx(tb_A_C, path = "../../results_03_05_2025/A_C_merged.xlsx")
+inform("Merged Excel saved as results_03_05_2025/A_C_merged.xlsx")
+
+tb_ol_AC <- A[A$ensembl_gene_id %in% C$ensembl_gene_id, ]
+colnames(C) <- paste0("C_", gsub("\\.+\\d+$", "", colnames(C))) %>%
+  make.unique()
+C <- C %>% rename(ensembl_gene_id = C_ensembl_gene_id)
+tb_ol_AC <- tb_ol_AC %>% left_join(C, by = "ensembl_gene_id")
+write_xlsx(tb_ol_AC, path = "../../results_03_05_2025/A_C_overlapping.xlsx")
+inform("Overlapping Excel saved as results_03_05_2025/A_C_overlapping.xlsx")
+```
+
+## Task2: How many genes in B are also present in C? Can you merge these two files? Generate file of overlapping genes between B and C.
+```{r}
+ol_BC <- sum(B$ensembl_gene_id %in% C$ensembl_gene_id)
+inform(paste0(ol_BC, " genes in B are also present in C.\n"))
+tb_B_C <- full_join(B, C, by = "ensembl_gene_id")
+write_xlsx(tb_B_C, path = "../../results_03_05_2025/B_C_merged.xlsx")
+inform("Merged Excel saved as results_03_05_2025/B_C_merged.xlsx")
+
+tb_ol_BC <- B[B$ensembl_gene_id %in% C$ensembl_gene_id, ]
+tb_ol_BC <- tb_ol_BC %>% left_join(C, by = "ensembl_gene_id")
+write_xlsx(tb_ol_BC, path = "../../results_03_05_2025/B_C_overlapping.xlsx")
+inform("Overlapping Excel saved as results_03_05_2025/B_C_overlapping.xlsx")
+```
+
+## Task3: How many genes in D are present in A? How many genes in D are present in B?
+```{r}
+ol_DA <- sum(D$ensembl_gene_id %in% A$ensembl_gene_id)
+inform(paste0(ol_DA, " genes in D are also present in A.\n"))
+
+ol_DB <- sum(D$ensembl_gene_id %in% B$ensembl_gene_id)
+inform(paste0(ol_DB, " genes in D are also present in B.\n"))
+```
+
+## Task4: How many genes in E are present in A? How many genes in E are present in B?
+```{r}
+ol_EA <- sum(E$ensembl_gene_id %in% A$ensembl_gene_id)
+inform(paste0(ol_EA, " genes in E are also present in A.\n"))
+
+ol_EB <- sum(E$ensembl_gene_id %in% B$ensembl_gene_id)
+inform(paste0(ol_EB, " genes in E are also present in B.\n"))
+```
